@@ -322,6 +322,32 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════
+section "7/7  注册「输入 pi 自动打开 Web UI」"
+# ══════════════════════════════════════════════════════════
+if (( SKIP_WEBUI )); then
+  skip "已跳过（--skip-web-ui）"
+else
+  SHELL_RC=""
+  case "${SHELL:-}" in
+    *zsh) SHELL_RC="$HOME_DIR/.zshrc" ;;
+    *)    SHELL_RC="$HOME_DIR/.bashrc" ;;
+  esac
+  if [[ -z "$SHELL_RC" || ! -f "$SHELL_RC" ]]; then
+    warn "未找到 shell 配置文件（$SHELL_RC），跳过 —— 可手动把 shell/pi-open-web.sh 内容追加到 rc 文件"
+  else
+    if grep -qF 'pi-config: pi → 打开 Web UI' "$SHELL_RC" 2>/dev/null; then
+      skip "已注册过：$(tilde "$SHELL_RC")"
+    elif (( DRY_RUN )); then
+      skip "[dry-run] 追加 shell/pi-open-web.sh → $(tilde "$SHELL_RC")"
+    else
+      printf '\n' >> "$SHELL_RC"
+      cat "$REPO_DIR/shell/pi-open-web.sh" >> "$SHELL_RC"
+      ok "已注册（$(tilde "$SHELL_RC")）：输入 pi 打开 Web UI；pi-tui 进终端界面"
+    fi
+  fi
+fi
+
+# ══════════════════════════════════════════════════════════
 section "完成"
 # ══════════════════════════════════════════════════════════
 cat <<EOF

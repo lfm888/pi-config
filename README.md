@@ -14,6 +14,8 @@ pi-config/
 ├── add-skill.sh                    # 添加新 skill（本地目录或 GitHub）
 ├── scripts/
 │   └── mcp-probe.mjs               # JSON-RPC 探测脚本（共享）
+├── shell/
+│   └── pi-open-web.sh              # 「输入 pi 自动打开 Web UI」shell 钩子
 ├── .gitignore                      # 密钥/缓存排除清单
 ├── mcp/
 │   └── mcp.json.template           # MCP 服务器配置模板（{{HOME}} 安装时替换）
@@ -76,7 +78,8 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 > - ~~`@modelcontextprotocol/server-puppeteer`~~ 已**被官方弃用**（no longer supported），改用 `chrome-devtools-mcp`
 > - `~/.mcp.json` 是**项目级**路径（只在 cwd 匹配时生效），因此统一迁到全局 `~/.config/mcp/mcp.json`
 
-服务器默认**懒启动**（lazy）：只有真正调用工具时才连接，不占上下文。
+服务器采用 **eager 启动**：每次会话启动即连接全部 4 个服务器（`/mcp` 立即可见连接状态）。
+想省资源时，把任意服务器的 `"lifecycle": "eager"` 改成 `"lazy"` 即可（默认懒启动）。
 
 ## skills
 
@@ -100,6 +103,17 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 
 浏览器端 Pi 控制台（流式对话、内置终端、文件树、Git 面板、多会话）。
 安装为**用户级 systemd 服务**（无需 sudo），开机自启。
+
+**输入 `pi` 自动打开 Web UI**：安装器会把 `shell/pi-open-web.sh` 追加到你的 shell 配置，行为：
+
+| 输入 | 行为 |
+|------|------|
+| `pi`（不带参数）| 确保服务在运行 → 自动打开浏览器 `http://127.0.0.1:8787` |
+| `pi "提问"` / `pi --print ...` | 仍走终端 TUI（原功能保留）|
+| `pi-tui` 或 `\pi` | 强制进入终端 TUI |
+| 无图形环境（SSH）| 不弹浏览器，只打印访问地址 |
+
+想取消该行为：从 `~/.bashrc`（或 `~/.zshrc`）删除 `pi-config: pi → 打开 Web UI` 标记块。
 
 ```bash
 systemctl --user status pi-web-ui     # 状态
@@ -200,7 +214,8 @@ pi 里执行 /reload                                # 让 MCP 生效
 
 | 现象 | 处理 |
 |------|------|
-| GitHub 服务器无工具 | 检查 `GITHUB_PERSONAL_ACCESS_TOKEN` 已 export（`/mcp setup` 里也能看）|
+| github 服务器连接报错 | `GITHUB_PERSONAL_ACCESS_TOKEN` 未设置；eager 模式下启动即报错，设置后 `/reload` |
+| GitHub 服务器无工具 | 检查环境变量已 export（`echo $GITHUB_PERSONAL_ACCESS_TOKEN`）|
 | chrome-devtools 连不上 | 需要 Chrome/Chromium 可执行；首次运行自动下载，或设 `CHROME_PATH` |
 | `/mcp` 里全部 offline | 服务器是懒启动，调用工具时才连接；先 `mcp({ search: ... })` 触达 |
 | 终端空白（pi-web-ui）| node-pty 未编译成功，重装：`npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui` |

@@ -2,22 +2,26 @@
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "{{HOME}}"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "{{HOME}}"],
+      "lifecycle": "eager"
     },
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
-      }
+      },
+      "lifecycle": "eager"
     },
     "git": {
       "command": "npx",
-      "args": ["-y", "@cyanheads/git-mcp-server@2"]
+      "args": ["-y", "@cyanheads/git-mcp-server@2"],
+      "lifecycle": "eager"
     },
     "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@1"]
+      "args": ["-y", "chrome-devtools-mcp@1"],
+      "lifecycle": "eager"
     }
   }
 }
