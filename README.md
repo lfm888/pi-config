@@ -8,10 +8,16 @@
 ```
 pi-config/
 ├── install.sh                      # 一键安装（幂等，可重复执行）
+├── sync.sh                         # 一键同步：git pull + install.sh
+├── verify.sh                       # push 前自检：探测 MCP / 校验 skills / 扫密钥
+├── add-mcp.sh                      # 添加新 MCP 服务器（可选探测验证）
+├── add-skill.sh                    # 添加新 skill（本地目录或 GitHub）
+├── scripts/
+│   └── mcp-probe.mjs               # JSON-RPC 探测脚本（共享）
 ├── .gitignore                      # 密钥/缓存排除清单
 ├── mcp/
 │   └── mcp.json.template           # MCP 服务器配置模板（{{HOME}} 安装时替换）
-├── skills/
+├── skills/                         # 全部 skill（pi 的 settings.json 直接指向这里）
 │   ├── brainstorming/              # 需求/设计协作（写代码前必须过设计关）
 │   ├── codex-grade-coding/         # 高级工程师级编码协议
 │   └── grill-me/                   # 对计划/方案层层追问
@@ -124,19 +130,71 @@ grep -rInE '(ghp_|sk-|AIza|-----BEGIN)' --exclude-dir=.git .
 git status   # 确认没有意外文件
 ```
 
-## 日常维护
+## 维护工作流（看到好东西 → 加进来 → 全机器生效）
+
+### 添加 MCP 服务器
 
 ```bash
-# 改 skill / 改 MCP 配置
-cd ~/pi-config && vim skills/brainstorming/SKILL.md   # 或编辑 mcp/mcp.json.template
-git add -A && git commit -m "..." && git push
+# npm 包服务器（自动以 npx 启动；--test 先探测验证；--apply 本机立即生效）
+./add-mcp.sh --name memory --package @modelcontextprotocol/server-memory \
+             --args '{{HOME}}/memory.json' --test --apply
 
-# 私人主机同步
-cd ~/pi-config && git pull && ./install.sh
+# 远程 HTTP 服务器
+./add-mcp.sh --name docs --url https://mcp.example.com/mcp --test
 
-# 改完 MCP 配置后
-pi 里执行 /reload
+# 完整自定义条目
+./add-mcp.sh --name foo --entry '{"command":"npx","args":["-y","some-server"]}'
 ```
+
+要点：
+- `--args` 里用 `{{HOME}}` 等占位符，安装时按各机器目录替换（可移植）
+- `--env` 里的 `${VAR}` 原样保留，由 pi-mcp-adapter 在运行时展开（如 GitHub token）
+- 强烈建议加 `--test`：写入前先做 JSON-RPC 探测，包不存在/启动失败会当场中止
+- 同名配置会拒绝，加 `--force` 才覆盖
+
+### 添加 skill
+
+```bash
+# 从 GitHub（整个仓库 / 子目录 / 指定分支；--commit 自动提交）
+./add-skill.sh --source github.com/owner/some-skill --ref main --commit
+./add-skill.sh --source github.com/owner/big-repo/sub/dir
+
+# 从本地目录
+./add-skill.sh --source ~/下载/my-skill --name my-skill
+```
+
+要点：
+- 强制要求 SKILL.md 且 frontmatter 含 `name` + `description`（name 须与目录名一致）
+- 校验失败自动回滚，不留下半成品
+- 添加即生效 —— pi 的 settings.json 已指向 `skills/` 目录，无需任何额外注册
+- 克隆走 git(HTTP/1.1) + codeload tarball 双重兜底，GitHub 网络不稳也能用
+
+### push 前自检
+
+```bash
+./verify.sh              # 完整：探测全部 MCP 服务器 + 校验 skills + 扫密钥
+./verify.sh --no-probe   # 只做静态检查（离线可用，快）
+```
+
+### 任何机器一键同步
+
+```bash
+./sync.sh                # git pull + ./install.sh（幂等）
+```
+
+### 标准流程（本机发现 → 全球生效）
+
+```bash
+cd ~/pi-config
+./add-mcp.sh --name xxx --package yyy --test    # 或 ./add-skill.sh ...
+./verify.sh                                      # push 前自检
+git add -A && git commit -m "add xxx" && git push
+# 其他机器：
+./sync.sh                                        # 拉取 + 应用
+pi 里执行 /reload                                # 让 MCP 生效
+```
+
+> MCP 配置变更后需要在 pi 里执行 `/reload`；skills 变更无需任何操作。
 
 ## 故障排查
 
