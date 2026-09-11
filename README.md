@@ -237,3 +237,62 @@ pi 里执行 /reload                                # 让 MCP 生效
 - **pi**：0.85.1
 - **pi-web-ui**：0.76.0
 - 所有 MCP 服务器均通过 JSON-RPC 工具探测（initialize + tools/list）
+
+---
+
+## Windows 专用部署
+
+> 本章节针对 Windows (Git Bash / PowerShell) 环境的部署细节。
+
+### 前置条件
+
+- **Node.js** ≥ v22.19 (官方安装或 NVM)
+- **Git for Windows** (建议安装至 `D:\lfm\Git`，`bin\bash.exe` 可用)
+- **Visual Studio Build Tools** (x86-64，必须选组件："使用 C++ 的桌面开发"，node-pty 编译必需)
+- **Python** (≥ v3.8，建议从 python.org 安装并添加至 PATH)
+
+### 一键安装 (推荐)
+
+打开 **Git Bash** (D:\lfm\Git\bin\bash.exe) 并执行：
+
+```bash
+# 1. 克隆仓库到主目录
+git clone <仓库地址> ~/pi-config
+cd ~/pi-config
+
+# 2. 配置 GitHub Token (仅需一次，写入 ~/.bashrc)
+export GITHUB_PERSONAL_ACCESS_TOKEN=""
+echo 'export GITHUB_PERSONAL_ACCESS_TOKEN=""' >> ~/.bashrc
+
+# 3. 运行安装脚本 (幂等，可重复执行)
+./install.sh
+
+# 4. 启动 pi-web-ui (Windows 无 systemd，需手动启动)
+pi-web-ui
+# 浏览器自动打开: http://127.0.0.1:8787
+# 如不自动打开，手动访问 http://localhost:8787
+```
+
+### 常用命令备忘
+
+| 操作 | Git Bash 命令 | 说明 |
+|------|--------------|------|
+| 启动 pi-web-ui | `pi-web-ui` | 默认 `http://127.0.0.1:8787` |
+| 重载 MCP 配置 | `/reload` | 在 pi 终端执行 |
+| 检查 MCP 状态 | `/mcp` | 在 pi 终端执行 |
+| 同步更新 | `./sync.sh` | `git pull + ./install.sh` |
+| 技能变更生效 | 无需操作 | `git pull` 后自动生效 |
+| 关闭 pi-web-ui | `Ctrl+C` | 或关闭终端窗口 |
+
+### 已知限制
+
+- **node-pty 编译**：Windows 上需 Visual Studio Build Tools，若编译失败，pi-web-ui 的内置终端可能不可用（核心聊天功能正常）
+- **systemd 服务**：Windows 无法使用 `systemctl --user` (除非 WSL2 + systemd)，所有服务需手动启动
+- **GitHub token**：写入 `~/.bashrc` 后每个新终端自动生效；pi-web-ui 服务单独读取 `~/.config/pi-web.env`
+
+### 后续同步
+
+```bash
+cd ~/pi-config
+./sync.sh  # git pull + ./install.sh (幂等)
+```
