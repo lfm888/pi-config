@@ -1,0 +1,49 @@
+# ══════════════════════════════════════════════════
+#  密钥与凭证 —— 绝对不要提交
+# ══════════════════════════════════════════════════
+auth.json
+provider-keys.json
+credentials.json
+*.key
+*.pem
+
+# 环境变量文件（保留示例文件）
+.env
+.env.*
+!.env.example
+!env/env.example
+env/env.local
+*.env.local
+.pi-config.env
+
+# ══════════════════════════════════════════════════
+#  pi 运行时缓存与状态（可自动重建，无需版本控制）
+# ══════════════════════════════════════════════════
+mcp-cache.json
+mcp-npx-cache.json
+mcp-onboarding.json
+models-store.json
+sessions/
+web-search-cache/
+.pi-web/
+client-state.json
+
+# ══════════════════════════════════════════════════
+#  备份
+# ══════════════════════════════════════════════════
+.pi-config-backup/
+*.bak
+*.backup
+*.orig
+
+# ══════════════════════════════════════════════════
+#  编辑器 / 系统
+# ══════════════════════════════════════════════════
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+*.log
+node_modules/

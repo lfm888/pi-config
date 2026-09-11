@@ -1,0 +1,4 @@
+# pi 包列表（每行一个，install.sh 会逐个安装）
+# 语法与 `pi install <source>` 一致
+npm:pi-mcp-adapter
+npm:pi-web-access

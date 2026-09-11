@@ -1,0 +1,17 @@
+[Unit]
+Description=pi-web-ui — web chat for the pi coding agent
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={{PI_WEB_WORKSPACE}}
+Environment=PI_WEB_PORT={{PI_WEB_PORT}}
+Environment=PI_WEB_CWD={{PI_WEB_WORKSPACE}}
+Environment=PATH={{PATH}}
+Environment=LANG={{LANG}}
+ExecStart="{{NODE_BIN}}" "{{PI_WEB_ENTRY}}"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
