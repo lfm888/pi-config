@@ -115,6 +115,15 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 
 想取消该行为：从 `~/.bashrc`（或 `~/.zshrc`）删除 `pi-config: pi → 打开 Web UI` 标记块。
 
+**GitHub token 生效路径**（两个入口各自独立）：
+
+| 入口 | token 来源 | 生效方式 |
+|------|-----------|---------|
+| 终端 `pi` / TUI | `~/.bashrc` 的 `export GITHUB_PERSONAL_ACCESS_TOKEN=...` | 新开终端（或 `source ~/.bashrc`）|
+| pi-web-ui 服务（网页） | `~/.config/pi-web.env`（install.sh 自动生成，600 权限，可从 ~/.bashrc 迁移）| `systemctl --user restart pi-web-ui`（会中断当前网页会话）|
+
+> systemd 服务**不读** `~/.bashrc`，所以 web 会话的 token 必须放在 `~/.config/pi-web.env`（`EnvironmentFile` 引用，该文件在仓库外、不提交）。
+
 ```bash
 systemctl --user status pi-web-ui     # 状态
 systemctl --user restart pi-web-ui    # 重启

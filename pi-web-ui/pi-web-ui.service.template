@@ -9,6 +9,7 @@ Environment=PI_WEB_PORT={{PI_WEB_PORT}}
 Environment=PI_WEB_CWD={{PI_WEB_WORKSPACE}}
 Environment=PATH={{PATH}}
 Environment=LANG={{LANG}}
+EnvironmentFile=-{{HOME}}/.config/pi-web.env
 ExecStart="{{NODE_BIN}}" "{{PI_WEB_ENTRY}}"
 Restart=always
 RestartSec=5

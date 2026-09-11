@@ -19,6 +19,12 @@ PI_SETTINGS="$PI_AGENT_DIR/settings.json"
 MCP_GLOBAL_FILE="$HOME_DIR/.config/mcp/mcp.json"
 LEGACY_MCP_FILE="$HOME_DIR/.mcp.json"
 UNIT_FILE="$HOME_DIR/.config/systemd/user/pi-web-ui.service"
+PI_WEB_ENV_FILE="$HOME_DIR/.config/pi-web.env"
+SHELL_RC=""
+case "${SHELL:-}" in
+  *zsh) SHELL_RC="$HOME_DIR/.zshrc" ;;
+  *)    SHELL_RC="$HOME_DIR/.bashrc" ;;
+esac
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$HOME_DIR/.pi-config-backup/$STAMP"
@@ -310,6 +316,28 @@ else
       if (( ! DRY_RUN )); then
         ok "已写入服务单元：$(tilde "$UNIT_FILE")"
       fi
+      # 服务环境变量文件（systemd 服务不读 ~/.bashrc，github MCP 的 token 从这里取）
+      if [[ -f "$PI_WEB_ENV_FILE" ]]; then
+        skip "已存在：$(tilde "$PI_WEB_ENV_FILE")"
+      elif (( DRY_RUN )); then
+        skip "[dry-run] 生成 $(tilde "$PI_WEB_ENV_FILE")"
+      else
+        mkdir -p "$HOME_DIR/.config"
+        src_token="$(sed -n 's/.*GITHUB_PERSONAL_ACCESS_TOKEN="\([^"]*\)".*/\1/p' "$SHELL_RC" 2>/dev/null | head -1)"
+        {
+          echo "# pi-web-ui 服务环境变量（由 pi-config 生成；此文件勿提交到任何仓库）"
+          echo "# systemd 服务不读 ~/.bashrc，github MCP 的 token 从这里读取"
+          if [[ -n "$src_token" && "$src_token" != *你* ]]; then
+            echo "# 已自动从 $(tilde "$SHELL_RC") 迁移："
+            echo "GITHUB_PERSONAL_ACCESS_TOKEN=\"$src_token\""
+          else
+            echo "# 请编辑本文件填入你的 GitHub token："
+            echo '# GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxx"'
+          fi
+        } > "$PI_WEB_ENV_FILE"
+        chmod 600 "$PI_WEB_ENV_FILE"
+        ok "已生成 $(tilde "$PI_WEB_ENV_FILE")（600 权限）"
+      fi
       run systemctl --user daemon-reload
       run systemctl --user enable --now pi-web-ui
       if (( ! DRY_RUN )) && systemctl --user is-active --quiet pi-web-ui; then
@@ -327,11 +355,6 @@ section "7/7  注册「输入 pi 自动打开 Web UI」"
 if (( SKIP_WEBUI )); then
   skip "已跳过（--skip-web-ui）"
 else
-  SHELL_RC=""
-  case "${SHELL:-}" in
-    *zsh) SHELL_RC="$HOME_DIR/.zshrc" ;;
-    *)    SHELL_RC="$HOME_DIR/.bashrc" ;;
-  esac
   if [[ -z "$SHELL_RC" || ! -f "$SHELL_RC" ]]; then
     warn "未找到 shell 配置文件（$SHELL_RC），跳过 —— 可手动把 shell/pi-open-web.sh 内容追加到 rc 文件"
   else
