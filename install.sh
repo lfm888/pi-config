@@ -127,7 +127,7 @@ if (( DRY_RUN )); then
 fi
 
 # ══════════════════════════════════════════════════════════
-section "1/6  环境检查"
+section "1/7  环境检查"
 # ══════════════════════════════════════════════════════════
 missing=0
 for c in node npm pi; do
@@ -153,7 +153,7 @@ fi
 ok "node $(node -v)  /  npm $(npm -v)  /  pi $(pi --version 2>/dev/null | tail -1 || echo '?')"
 
 # ══════════════════════════════════════════════════════════
-section "2/6  备份现有配置"
+section "2/7  备份现有配置"
 # ══════════════════════════════════════════════════════════
 backup_if_exists() {
   local f="$1"
@@ -193,7 +193,7 @@ render_template() {
 }
 
 # ══════════════════════════════════════════════════════════
-section "3/6  安装 MCP 配置"
+section "3/7  安装 MCP 配置"
 # ══════════════════════════════════════════════════════════
 
 # 渲染模板到临时文件（即使 --dry-run 也要渲染，才能算出「将要发生什么」）
@@ -285,7 +285,7 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════
-section "4/6  配置 skills 指向与 pi 设置"
+section "4/7  配置 skills 指向与 pi 设置"
 # ══════════════════════════════════════════════════════════
 if (( DRY_RUN )); then
   skip "[dry-run] 更新 $(tilde "$PI_SETTINGS")（skills 指向 + packages 合并）"
@@ -362,7 +362,7 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════
-section "5/6  安装 pi 包"
+section "5/7  安装 pi 包"
 # ══════════════════════════════════════════════════════════
 if (( SKIP_PACKAGES )); then
   skip "已跳过（--skip-packages）"
@@ -386,7 +386,7 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════
-section "6/6  安装 pi-web-ui"
+section "6/7  安装 pi-web-ui"
 # ══════════════════════════════════════════════════════════
 if (( SKIP_WEBUI )); then
   skip "已跳过（--skip-web-ui）"
@@ -472,27 +472,37 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════
-section "7/7  注册「输入 pi 自动打开 Web UI」"
+section "7/7  清理历史钩子（pi 保持终端 TUI）"
 # ══════════════════════════════════════════════════════════
-if (( SKIP_WEBUI )); then
-  skip "已跳过（--skip-web-ui）"
+# 历史版本会往 shell 配置追加一段覆盖 `pi` 命令的钩子（输入 pi 自动打开 Web UI）。
+# 现在改成：pi = 终端 TUI（原生行为，不覆盖）；pi-web-ui = 浏览器界面。
+# 这里把旧钩子（标记块）从 shell 配置里清掉，幂等。
+if [[ -z "$SHELL_RC" || ! -f "$SHELL_RC" ]]; then
+  skip "无 shell 配置文件（$SHELL_RC），跳过"
+elif ! grep -qF 'pi-config: pi → 打开 Web UI' "$SHELL_RC" 2>/dev/null; then
+  skip "无历史钩子：$(tilde "$SHELL_RC")"
+elif (( DRY_RUN )); then
+  skip "[dry-run] 从 $(tilde "$SHELL_RC") 移除历史钩子标记块"
 else
-  if [[ -z "$SHELL_RC" || ! -f "$SHELL_RC" ]]; then
-    warn "未找到 shell 配置文件（$SHELL_RC），跳过 —— 可手动把 shell/pi-open-web.sh 内容追加到 rc 文件"
-  else
-    if grep -qF 'pi-config: pi → 打开 Web UI' "$SHELL_RC" 2>/dev/null; then
-      skip "已注册过：$(tilde "$SHELL_RC")"
-    elif (( DRY_RUN )); then
-      skip "[dry-run] 追加 shell/pi-open-web.sh → $(tilde "$SHELL_RC")"
-    else
-      printf '\n' >> "$SHELL_RC"
-      cat "$REPO_DIR/shell/pi-open-web.sh" >> "$SHELL_RC"
-      ok "已注册（$(tilde "$SHELL_RC")）：输入 pi 打开 Web UI；pi-tui 进终端界面"
-    fi
-    if (( IS_WINDOWS )); then
-      echo "       注意：该钩子只对 Git Bash 生效；PowerShell/CMD 可用桌面图标（pi-web-ui server shortcut）"
-    fi
-  fi
+  SHELL_RC="$SHELL_RC" node -e '
+    const fs = require("fs");
+    const file = process.env.SHELL_RC;
+    const src = fs.readFileSync(file, "utf8");
+    const eol = src.includes("\r\n") ? "\r\n" : "\n";
+    const kept = [];
+    let inside = false;
+    for (const line of src.split(/\r?\n/)) {
+      if (!inside && line.includes("pi-config: pi → 打开 Web UI")) { inside = true; continue; }
+      if (inside) {
+        if (line.includes("pi-config: end")) inside = false;
+        continue;
+      }
+      kept.push(line);
+    }
+    while (kept.length && kept[kept.length - 1].trim() === "") kept.pop();
+    fs.writeFileSync(file, kept.join(eol) + eol);
+  '
+  ok "已移除历史钩子：$(tilde "$SHELL_RC")（pi 恢复为终端 TUI）"
 fi
 
 # ══════════════════════════════════════════════════════════

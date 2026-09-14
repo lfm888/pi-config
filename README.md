@@ -16,7 +16,7 @@ pi-config/
 │   ├── mcp-probe.mjs               # JSON-RPC 探测脚本（共享）
 │   └── render-template.mjs         # 模板渲染器（install.sh / verify.sh 共用）
 ├── shell/
-│   └── pi-open-web.sh              # 「输入 pi 自动打开 Web UI」shell 钩子
+│   └── pi-web-ui.bat               # Windows 启动包装（可选，等价于直接跑 pi-web-ui）
 ├── .gitattributes                  # 换行符统一（文本 LF、Windows 脚本 CRLF）
 ├── .gitignore                      # 密钥/缓存排除清单
 ├── mcp/
@@ -129,16 +129,17 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 浏览器端 Pi 控制台（流式对话、内置终端、文件树、Git 面板、多会话）。
 安装为**用户级 systemd 服务**（无需 sudo），开机自启。
 
-**输入 `pi` 自动打开 Web UI**：安装器会把 `shell/pi-open-web.sh` 追加到你的 shell 配置，行为：
+**命令约定**（本仓库**不覆盖** `pi`，各走各的）：
 
 | 输入 | 行为 |
 |------|------|
-| `pi`（不带参数）| 确保服务在运行 → 自动打开浏览器 `http://127.0.0.1:8787` |
-| `pi "提问"` / `pi --print ...` | 仍走终端 TUI（原功能保留）|
-| `pi-tui` 或 `\pi` | 强制进入终端 TUI |
-| 无图形环境（SSH）| 不弹浏览器，只打印访问地址 |
+| `pi` | 终端 TUI（pi 原生行为，不做任何重定向）|
+| `pi-web-ui` | 启动/连接 Web UI，并自动打开浏览器 `http://127.0.0.1:8787` |
+| `pi-web-ui server install` / `server shortcut` | 装成开机自启服务 / 生成桌面图标 |
 
-想取消该行为：从 `~/.bashrc`（或 `~/.zshrc`）删除 `pi-config: pi → 打开 Web UI` 标记块。
+> 历史版本会往 shell 配置追加一段「输入 `pi` 自动打开 Web UI」的钩子（把 `pi` 覆盖成打开浏览器）。
+> 现在不再使用，`install.sh` 会**自动清理**该标记块（幂等）：手动清理即删除 `~/.bashrc`
+> （或 `~/.zshrc`）里 `pi-config: pi → 打开 Web UI` 到 `pi-config: end` 之间的内容。
 
 **GitHub token 生效路径**（两个入口各自独立）：
 
