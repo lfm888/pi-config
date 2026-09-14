@@ -83,7 +83,7 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 | `filesystem` | `@modelcontextprotocol/server-filesystem`（**本地自包含安装**，见下）| 2026.8.31 + zod 4.6.5 | 14 | 文件读写（限定 `$HOME`）|
 | `github` | `@modelcontextprotocol/server-github` | 2025.4.8 | 26 | GitHub API（需要 `GITHUB_PERSONAL_ACCESS_TOKEN`）|
 | `git` | `@cyanheads/git-mcp-server` | 2.15.3 | 28 | 本地 git 操作（status/diff/commit/push…）|
-| `chrome-devtools` | `chrome-devtools-mcp` | 1.9.0 | 29 | 浏览器自动化/截图/网络/性能（`lazy` 启动）|
+| `chrome-devtools` | `chrome-devtools-mcp` | 1.9.0 | 29 | 浏览器自动化/截图/网络/性能（`lazy` 启动；自动探测本机浏览器）|
 
 > ⚠️ 历史版本演进（重要！）：
 > - ~~`@modelcontextprotocol/server-git`~~ **在 npm 上不存在（404）**，改用 `@cyanheads/git-mcp-server`
@@ -99,6 +99,13 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 服务器启动策略（`lifecycle`）：`filesystem` / `github` / `git` 用 **eager**（会话启动即连，`/mcp` 立即可见状态）；
 `chrome-devtools` 用 **lazy** —— 它会拉起 Chrome，没必要每次开会话都启动，首次调用其工具时才连接。
 可选值：`eager` / `lazy` / `keep-alive` / `lazy-keep-alive`。
+
+**浏览器可执行路径**：`chrome-devtools-mcp` 默认只认系统 Chrome（Linux 上是 `/opt/google/chrome/chrome`），
+识别不了 Chromium（含 snap 安装）、Brave、Edge 等。`install.sh` 会自动探测本机浏览器，并把路径以
+`--executablePath=...` 的形式写进 `~/.config/mcp/mcp.json` —— 这属于「本机增强」，仓库模板保持干净可移植。
+探测顺序：`PATH` 里的 `google-chrome` / `chromium` / `chromium-browser` / `brave-browser` / `microsoft-edge`，
+然后是 `/opt/google/chrome/chrome`、`/snap/bin/chromium`、macOS 的 `Google Chrome.app` 等固定路径。
+装好浏览器后重跑 `./install.sh` 即可自动补上（已指向有效路径时不会改动）。
 
 ### filesystem 为什么不用 npx（以及怎么升级）
 
@@ -290,7 +297,7 @@ pi 里执行 /reload                                # 让 MCP 生效
 |------|------|
 | github 服务器连接报错 | `GITHUB_PERSONAL_ACCESS_TOKEN` 未设置；eager 模式下启动即报错，设置后 `/reload` |
 | GitHub 服务器无工具 | 检查环境变量已 export（`echo $GITHUB_PERSONAL_ACCESS_TOKEN`）|
-| chrome-devtools 连不上 | 需要 Chrome/Chromium 可执行；首次运行自动下载，或设 `CHROME_PATH` |
+| chrome-devtools 报 "Could not find Google Chrome executable" | 本机没装 Chrome，或只装了 Chromium/Edge。重跑 `./install.sh` 会自动探测并写入 `--executablePath`；也可手动在 `~/.config/mcp/mcp.json` 的 `chrome-devtools.args` 里加 `--executablePath=/你的/浏览器/路径`，然后 `/reload` |
 | `/mcp` 里全部 offline | 服务器是懒启动，调用工具时才连接；先 `mcp({ search: ... })` 触达 |
 | 终端空白（pi-web-ui）| node-pty 未编译成功，重装：`npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui` |
 | MCP 配置不生效 | 执行 `/reload`；确认没有 `~/.mcp.json` 残留遮蔽全局配置 |

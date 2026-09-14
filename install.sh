@@ -205,6 +205,37 @@ render_template() {
 section "3/7  安装 MCP 配置"
 # ══════════════════════════════════════════════════════════
 
+# 探测本机 Chrome/Chromium 可执行文件；找到则打印绝对路径并返回 0
+# 说明：chrome-devtools-mcp 默认只认系统 Chrome（Linux 上是 /opt/google/chrome/chrome），
+#       Chromium / snap 安装 / Edge 等一律找不到 —— 需要在启动参数里显式给 --executablePath。
+detect_chrome() {
+  local c p
+  # 1) PATH 中的常见命令名（Linux / macOS；Windows Git Bash 也会命中 PATH 条目）
+  for c in google-chrome google-chrome-stable chromium chromium-browser \
+           brave-browser microsoft-edge microsoft-edge-stable; do
+    if command -v "$c" >/dev/null 2>&1; then
+      command -v "$c"; return 0
+    fi
+  done
+  # 2) 常见固定安装路径（含 Windows Git Bash 的 /c/... 写法）
+  local candidates="/opt/google/chrome/chrome
+/snap/bin/chromium
+/usr/lib/chromium-browser/chromium-browser
+/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  if (( IS_WINDOWS )); then
+    candidates="/c/Program Files/Google/Chrome/Application/chrome.exe
+/c/Program Files (x86)/Google/Chrome/Application/chrome.exe
+/c/Program Files/Microsoft/Edge/Application/msedge.exe
+/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe
+$candidates"
+  fi
+  while IFS= read -r p; do
+    if [[ -n "$p" && -x "$p" ]]; then printf '%s' "$p"; return 0; fi
+  done <<< "$candidates"
+  return 1
+}
+
 # 3a. filesystem 服务器：本地自包含安装（目录在仓库外，~/.pi/mcp-servers）
 WIN_MCP_DIR="$(win_path "$MCP_SERVERS_DIR")"
 if node -e '
@@ -316,6 +347,40 @@ if [[ -e "$LEGACY_MCP_FILE" ]]; then
   fi
 else
   skip "无残留的 ~/.mcp.json"
+fi
+
+# 3d. chrome-devtools：把探测到的浏览器可执行路径写入本机 MCP 配置
+#     模板保持干净可移植（不含机器相关路径），这里做「本机增强」；
+#     探测不到就维持默认自动探测，不阻塞安装。
+CHROME_EXE="$(detect_chrome || true)"
+if [[ -z "$CHROME_EXE" ]]; then
+  warn "未找到 Chrome/Chromium —— chrome-devtools 的浏览器工具将不可用"
+  skip "  安装 Chrome/Chromium（或 Linux 的 chromium/chromium-browser）后重跑本脚本即可"
+elif (( DRY_RUN )); then
+  skip "[dry-run] chrome-devtools 将使用浏览器：$CHROME_EXE"
+else
+  CHROME_EXE="$(win_path "$CHROME_EXE")"
+  CHROME_EXE="$CHROME_EXE" MCP_FILE="$MCP_GLOBAL_FILE" \
+  GREEN="$GREEN" YELLOW="$YELLOW" DIM="$DIM" RESET="$RESET" \
+  node -e '
+    const fs = require("fs");
+    const G = process.env.GREEN, Y = process.env.YELLOW, D = process.env.DIM, R = process.env.RESET;
+    const file = process.env.MCP_FILE, exe = process.env.CHROME_EXE;
+    const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+    const s = cfg.mcpServers && cfg.mcpServers["chrome-devtools"];
+    if (!s) { console.log(`  ${D}• 未配置 chrome-devtools，跳过浏览器路径注入${R}`); process.exit(0); }
+    s.args = Array.isArray(s.args) ? s.args : [];
+    const cur = s.args.find((a) => String(a).startsWith("--executablePath"));
+    const curPath = cur ? String(cur).replace(/^--executablePath=?/, "") : null;
+    if (curPath && fs.existsSync(curPath)) {
+      console.log(`  ${D}• chrome-devtools 已指向存在的浏览器：${curPath}${R}`);
+      process.exit(0);
+    }
+    s.args = s.args.filter((a) => !String(a).startsWith("--executablePath"));
+    s.args.push(`--executablePath=${exe}`);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
+    console.log(`  ${G}✓${R} chrome-devtools 使用浏览器：${exe}`);
+  '
 fi
 
 # ══════════════════════════════════════════════════════════
