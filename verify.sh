@@ -43,6 +43,9 @@ done
 fail=0
 
 # ─────────── 渲染模板到临时文件（与 install.sh 共用 scripts/render-template.mjs）───────────
+# filesystem 的 bin 路径由 install.sh 装到 ~/.pi/mcp-servers；这里保持同名变量，
+# 渲染结果才能与实际写入的一致（Windows 下由渲染器转成 C:/...）
+export MCP_SERVERS_DIR="$HOME/.pi/mcp-servers"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 if ! node "$REPO_DIR/scripts/render-template.mjs" "$TPL" "$TMP" --json; then

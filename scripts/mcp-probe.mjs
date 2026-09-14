@@ -56,7 +56,15 @@ process.stdin.on('end', () => {
 
   let p;
   try {
-    p = spawn(sub(cfg.command), args, { stdio: ['pipe', 'pipe', 'pipe'], env });
+    if (process.platform === 'win32') {
+      // Windows 上 npx / npm 是 .cmd 包装，Node 不通过 shell 直接 spawn 会 ENOENT。
+      // 自己拼命令行（含空格/引号的参数加引号）走 cmd.exe，spawn 一个字符串即可。
+      const quote = (s) => (/[\s"]/.test(s) ? '"' + String(s).replace(/"/g, '\\"') + '"' : String(s));
+      const line = [sub(cfg.command), ...args].map(quote).join(' ');
+      p = spawn(line, { stdio: ['pipe', 'pipe', 'pipe'], env, shell: true });
+    } else {
+      p = spawn(sub(cfg.command), args, { stdio: ['pipe', 'pipe', 'pipe'], env });
+    }
   } catch (e) {
     finish({ ...res, error: 'spawn: ' + e.message });
     return;

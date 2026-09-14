@@ -80,7 +80,7 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 
 | 服务器 | 包 | 已验证版本 | 工具数 | 说明 |
 |--------|-----|-----------|--------|------|
-| `filesystem` | `@modelcontextprotocol/server-filesystem@2025.7.1`（模板已钉版本）| 2025.7.1 | 14 | 文件读写（限定 `$HOME`）|
+| `filesystem` | `@modelcontextprotocol/server-filesystem`（**本地自包含安装**，见下）| 2026.8.31 + zod 4.6.5 | 14 | 文件读写（限定 `$HOME`）|
 | `github` | `@modelcontextprotocol/server-github` | 2025.4.8 | 26 | GitHub API（需要 `GITHUB_PERSONAL_ACCESS_TOKEN`）|
 | `git` | `@cyanheads/git-mcp-server` | 2.15.3 | 28 | 本地 git 操作（status/diff/commit/push…）|
 | `chrome-devtools` | `chrome-devtools-mcp` | 1.9.0 | 29 | 浏览器自动化/截图/网络/性能（`lazy` 启动）|
@@ -88,12 +88,29 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 > ⚠️ 历史版本演进（重要！）：
 > - ~~`@modelcontextprotocol/server-git`~~ **在 npm 上不存在（404）**，改用 `@cyanheads/git-mcp-server`
 > - ~~`@modelcontextprotocol/server-puppeteer`~~ 已**被官方弃用**（no longer supported），改用 `chrome-devtools-mcp`
-> - ⚠️ `@modelcontextprotocol/server-filesystem` **2026.x 的 npm 包漏声明 `zod` 依赖**（zod 只被嵌套装在 sdk 的 `node_modules`，顶层没有），启动即 `ERR_MODULE_NOT_FOUND` → 模板已钉 `@2025.7.1`。**MCP 条目一律钉版本，别用 latest。**
+> - ⚠️ `@modelcontextprotocol/server-filesystem` 有两个坑（都实测踩过）：
+>   1. **npx 装 2026.x 时顶层缺 `zod`**（zod 只被嵌套装进 sdk 的 `node_modules`）→ 启动即 `ERR_MODULE_NOT_FOUND`
+>   2. **光钉服务器版本也不够**：npm 会把传递依赖 `zod` 解析成 **4.x**，而该服务器的 schema 生成器 `zod-to-json-schema@3` 在 zod 4 下产出**缺 `type` 的非法 JSON Schema** → 客户端报 `Invalid result for tools/list: ... inputSchema.type`
+>
+>   因此 filesystem **不用 npx**：由 `install.sh` 在 `~/.pi/mcp-servers` 做本地自包含安装（显式钉 `zod@4.6.5`），配置里用 `node <bin>` 直跑。详见下节。
+> - 其余 MCP 条目仍建议钉版本（如 `chrome-devtools-mcp@1`），避免被上游 `latest` 变更打穿。
 > - `~/.mcp.json` 是**项目级**路径（只在 cwd 匹配时生效），因此统一迁到全局 `~/.config/mcp/mcp.json`
 
 服务器启动策略（`lifecycle`）：`filesystem` / `github` / `git` 用 **eager**（会话启动即连，`/mcp` 立即可见状态）；
 `chrome-devtools` 用 **lazy** —— 它会拉起 Chrome，没必要每次开会话都启动，首次调用其工具时才连接。
 可选值：`eager` / `lazy` / `keep-alive` / `lazy-keep-alive`。
+
+### filesystem 为什么不用 npx（以及怎么升级）
+
+npx 只能指定**一个**包名，管不住传递依赖：服务器自己声明的是 `zod-to-json-schema@3`，但该包的 peer 范围是
+`^3.25.28 || ^4`，npm 于是把 `zod` 装成了 **4.x**，两者组合会生成缺 `type: "object"` 的 schema，客户端直接拒收。
+
+所以 filesystem 改成“本地自包含安装 + node 直跑”：
+
+- 安装目录：`~/.pi/mcp-servers`（仓库外，由 `install.sh` 幂等维护；版本不符会自动重装）
+- 实际命令：`node ~/.pi/mcp-servers/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js <允许目录>`
+- 升级：改 `install.sh` 顶部的 `MCP_FILESYSTEM_PKGS`（空格分隔的 `包@版本`），重跑 `./install.sh`，再用 `./verify.sh --only filesystem` 验证
+- 另 3 个服务器继续走 npx：`server-github` 自己声明了 `zod@^3`，不踩这个坑
 
 ### 可选：GitHub 换官方远程 MCP（OAuth，免 PAT）
 
@@ -277,7 +294,9 @@ pi 里执行 /reload                                # 让 MCP 生效
 | `/mcp` 里全部 offline | 服务器是懒启动，调用工具时才连接；先 `mcp({ search: ... })` 触达 |
 | 终端空白（pi-web-ui）| node-pty 未编译成功，重装：`npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui` |
 | MCP 配置不生效 | 执行 `/reload`；确认没有 `~/.mcp.json` 残留遮蔽全局配置 |
-| `filesystem` 报 `ERR_MODULE_NOT_FOUND` | 拉到了有缺陷的 2026.x 版本；确认 `~/.config/mcp/mcp.json` 里是 `@modelcontextprotocol/server-filesystem@2025.7.1`，改完 `/reload` |
+| `filesystem` 报 `ERR_MODULE_NOT_FOUND` | 拉到了有缺陷的 2026.x npx 安装（顶层无 zod）；确认 `~/.config/mcp/mcp.json` 里是 `node <~/.pi/mcp-servers/...>` 直跑，改完 `/reload` |
+| Windows 上 `verify.sh` 报 `spawn npx ENOENT` | 老版 `mcp-probe.mjs` 直接 `spawn("npx")`，而 Windows 的 npx 是 `.cmd` 包装（不走 shell 就 ENOENT）→ 已修（Windows 下改走 shell）；`git pull` 后重试 |
+| `Invalid result for tools/list ... inputSchema.type` | filesystem 的 zod 漂到 4.x（npx 装的典型症状）→ 改用本地自包含安装：重跑 `./install.sh`（会装到 `~/.pi/mcp-servers`）后 `/reload` |
 | skills 不生效（无任何报错）| `~/.pi/agent/settings.json` 的 skills 路径悬空（仓库被移动/删除）→ 重跑 `./install.sh`；`./verify.sh --no-probe` 会提前报出来 |
 | Windows 上 packages 变成注释文字 | 老版 install.sh 的 CRLF 解析 bug（已修）→ `git pull` 后重跑 `./install.sh` |
 

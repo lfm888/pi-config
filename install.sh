@@ -41,7 +41,7 @@ case "$(uname -s 2>/dev/null)" in
 esac
 
 # Windows 下把 Git Bash 的 MSYS 路径（/c/x）转成 Windows 混合路径（C:/x）
-# —— pi-web-ui / pi 都是 Node 程序，不认 /c/... 这种写法
+# —— pi-web-ui / pi / node / npm 都是 Windows 程序，不认 /c/... 这种写法
 win_path() {
   if (( IS_WINDOWS )) && command -v cygpath >/dev/null 2>&1; then
     cygpath -m "$1"
@@ -49,6 +49,15 @@ win_path() {
     printf '%s' "$1"
   fi
 }
+
+# ──────────── MCP 服务器：本地自包含安装（filesystem 专用）────────────
+# 为什么 filesystem 不走 npx：npx 只能指定一个包名，管不住传递依赖。
+# npm 会把它的 zod 解析成 4.x，而该服务器用 zod-to-json-schema@3 生成工具 schema，
+# zod 4 下会产出缺 type 的非法 JSON Schema → 客户端报
+# “Invalid result for tools/list: ... inputSchema.type expected object”。
+# 显式把 zod 钉住、用 node 直跑 dist/index.js 才能真正稳定。
+MCP_SERVERS_DIR="$HOME_DIR/.pi/mcp-servers"
+MCP_FILESYSTEM_PKGS="@modelcontextprotocol/server-filesystem@2026.8.31 @modelcontextprotocol/sdk@1.30.0 zod@4.6.5"
 
 # ─────────────────────────── 开关 ───────────────────────────
 DRY_RUN=0
@@ -195,6 +204,31 @@ render_template() {
 # ══════════════════════════════════════════════════════════
 section "3/7  安装 MCP 配置"
 # ══════════════════════════════════════════════════════════
+
+# 3a. filesystem 服务器：本地自包含安装（目录在仓库外，~/.pi/mcp-servers）
+WIN_MCP_DIR="$(win_path "$MCP_SERVERS_DIR")"
+if node -e '
+  const fs = require("fs");
+  const want = { zod: "4.6.5", "@modelcontextprotocol/server-filesystem": "2026.8.31" };
+  for (const [name, ver] of Object.entries(want)) {
+    const p = process.argv[1] + "/node_modules/" + name + "/package.json";
+    if (!fs.existsSync(p)) process.exit(1);
+    if (JSON.parse(fs.readFileSync(p, "utf8")).version !== ver) process.exit(1);
+  }
+' "$WIN_MCP_DIR" 2>/dev/null; then
+  skip "filesystem 服务器已就绪（$MCP_SERVERS_DIR）"
+elif (( DRY_RUN )); then
+  skip "[dry-run] npm i --prefix <~/.pi/mcp-servers> $MCP_FILESYSTEM_PKGS"
+else
+  mkdir -p "$MCP_SERVERS_DIR"
+  if npm i --prefix "$WIN_MCP_DIR" $MCP_FILESYSTEM_PKGS >/dev/null 2>&1; then
+    ok "已安装 filesystem 服务器（2026.8.31 + zod 4.6.5）"
+  else
+    warn "filesystem 服务器安装失败，可手动重试："
+    echo "        npm i --prefix \"$WIN_MCP_DIR\" $MCP_FILESYSTEM_PKGS"
+  fi
+fi
+export MCP_SERVERS_DIR
 
 # 渲染模板到临时文件（即使 --dry-run 也要渲染，才能算出「将要发生什么」）
 TMP_MCP="$(mktemp)"

@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem@2025.7.1", "{{HOME}}"],
+      "command": "node",
+      "args": ["{{MCP_SERVERS_DIR}}/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js", "{{HOME}}"],
       "lifecycle": "eager"
     },
     "github": {
