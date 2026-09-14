@@ -21,6 +21,8 @@ PROBE="$REPO_DIR/scripts/mcp-probe.mjs"
 
 NO_PROBE=0
 QUIET=0
+# 只探测指定服务器（默认全部）：--only filesystem
+ONLY=""
 
 BOLD=$'\033[1m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; RESET=$'\033[0m'
 ok()  { (( QUIET )) || printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
@@ -32,22 +34,41 @@ while (( $# > 0 )); do
   case "$1" in
     --no-probe) NO_PROBE=1; shift ;;
     --quiet)    QUIET=1; shift ;;
-    -h|--help)  echo "用法: ./verify.sh [--no-probe] [--quiet]"; exit 0 ;;
+    --only)     ONLY="${2:?--only 需要一个服务器名（如 filesystem）}"; shift 2 ;;
+    -h|--help)  echo "用法: ./verify.sh [--no-probe] [--quiet] [--only <服务器名>]"; exit 0 ;;
     *)          err "未知选项: $1"; exit 1 ;;
   esac
 done
 
 fail=0
 
-# ─────────── 渲染模板到临时文件（{{HOME}} 替换）───────────
+# ─────────── 渲染模板到临时文件（与 install.sh 共用 scripts/render-template.mjs）───────────
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
-TPL="$TPL" OUT="$TMP" node -e '
-  const fs = require("fs");
-  const src = fs.readFileSync(process.env.TPL, "utf8");
-  const rendered = src.replace(/\{\{([A-Z0-9_]+)\}\}/g, (m, k) => process.env[k] ?? m);
-  fs.writeFileSync(process.env.OUT, rendered);
-'
+if ! node "$REPO_DIR/scripts/render-template.mjs" "$TPL" "$TMP" --json; then
+  err "模板渲染失败（占位符写法不受支持？见上方详情）"
+  fail=1
+  printf '{"mcpServers":{}}' > "$TMP"
+fi
+
+# ─────────── 渲染结果校验（占位符漏替换 / JSON 合法性）───────────
+# 渲染器只支持 {{VAR}}（变量名限 A-Z0-9_）；写成 {{VAR||default}} 这类语法不会被替换，
+# 会让「字面量占位符」被当成真实路径写进本机配置 —— 这里先行拦住
+section "模板渲染校验（mcp/mcp.json.template）"
+left="$(grep -o '{{[^}]*}}' "$TMP" 2>/dev/null | sort -u || true)"
+if [[ -n "$left" ]]; then
+  err "渲染后仍残留占位符（渲染器仅支持 {{VAR}}，变量名限 [A-Z0-9_]）："
+  printf '%s\n' "$left" | sed 's/^/      /'
+  fail=1
+else
+  ok "无残留占位符"
+fi
+if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP" 2>/dev/null; then
+  ok "渲染结果 JSON 合法"
+else
+  err "渲染结果不是合法 JSON"
+  fail=1
+fi
 
 # ─────────── MCP 服务器 ───────────
 section "MCP 服务器（mcp/mcp.json.template）"
@@ -60,7 +81,12 @@ if [[ -z "$servers" ]]; then
   err "模板里没有任何 mcpServers"; exit 1
 fi
 
+probed=0
 while IFS= read -r name; do
+  if [[ -n "$ONLY" && "$name" != "$ONLY" ]]; then
+    continue
+  fi
+  probed=$((probed + 1))
   cfg="$(node -e '
     const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
     process.stdout.write(JSON.stringify(c.mcpServers[process.argv[2]]));
@@ -90,6 +116,11 @@ while IFS= read -r name; do
   fi
 done <<< "$servers"
 
+if [[ -n "$ONLY" && "$probed" -eq 0 ]]; then
+  err "--only $ONLY：模板里没有这个服务器"
+  fail=1
+fi
+
 # ─────────── skills ───────────
 section "skills（skills/*/SKILL.md）"
 found=0
@@ -118,6 +149,34 @@ done
 if (( ! found )); then
   err "skills/ 目录为空"
   fail=1
+fi
+
+# ─────────── 本机 settings.json 指向的 skills 路径是否存在 ───────────
+# 仓库被移动/删除时，这条路径会悬空，而 pi 对此完全静默（不报错，只是少加载 skills）
+section "本机 skills 路径（settings.json）"
+SETTINGS_FILE="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json"
+if [[ ! -f "$SETTINGS_FILE" ]]; then
+  warn "未找到 $SETTINGS_FILE（还没跑过 ./install.sh？）"
+else
+  paths_out="$(node -e '
+    const fs = require("fs"), os = require("os"), path = require("path");
+    const cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const list = Array.isArray(cfg.skills) ? cfg.skills : [];
+    for (const raw of list) {
+      const abs = raw.startsWith("~") ? path.join(os.homedir(), raw.slice(1)) : raw;
+      console.log((fs.existsSync(abs) ? "OK " : "MISSING ") + raw);
+    }
+  ' "$SETTINGS_FILE" 2>/dev/null || true)"
+  if [[ -z "$paths_out" ]]; then
+    warn "settings.json 里没有配置 skills 路径"
+  else
+    while IFS= read -r line; do
+      case "$line" in
+        "OK "*)      ok "路径存在：${line#OK }" ;;
+        "MISSING "*) err "路径不存在：${line#MISSING } —— 仓库被移动/删除？重跑 ./install.sh 修回"; fail=1 ;;
+      esac
+    done <<< "$paths_out"
+  fi
 fi
 
 # ─────────── 密钥扫描 ───────────

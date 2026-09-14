@@ -43,6 +43,8 @@ scripts/start-server.sh --project-dir /path/to/project --open
 #           "state_dir":"/path/to/project/.superpowers/brainstorm/12345-1706000000/state"}
 ```
 
+> **Windows / Git Bash**：start/stop 是 bash 脚本，用 Git Bash 执行（`bash scripts/start-server.sh …`）；路径写 MSYS 形式（`D:\x` → `/d/x`）或用当前工作目录的相对路径。若后台进程被 Windows Terminal 回收，加 `--foreground`。`stop-server.sh` 同理。
+
 Save `screen_dir` and `state_dir` from the response. With `--open`, the browser opens itself when you push the first screen — you don't need to ask the user to open it, but still share the URL as a fallback (headless/remote setups won't auto-open).
 
 **The URL contains a session key (`?key=…`).** The server rejects any request

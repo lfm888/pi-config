@@ -1,0 +1,16 @@
+# 统一换行符，保证跨平台可复刻
+#   · 文本文件一律 LF（仓库内 + 工作区），避免 Windows 上 \r 破坏 shell/JS 解析
+#     （历史上就踩过：CRLF 让 JS 的 `#.*$` 注释剥离失效，把注释行写成了 pi 包名）
+#   · Windows 专用脚本保留 CRLF（cmd/PowerShell 对 CRLF 更稳妥）
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.gz binary

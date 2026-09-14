@@ -13,8 +13,10 @@ credentials.json
 !.env.example
 !env/env.example
 env/env.local
+*.env
 *.env.local
 .pi-config.env
+pi-web.env
 
 # ══════════════════════════════════════════════════
 #  pi 运行时缓存与状态（可自动重建，无需版本控制）

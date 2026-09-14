@@ -4,9 +4,5 @@
   "defaultModel": "kimi-k2.6",
   "skills": [
     "{{REPO_DIR}}/skills"
-  ],
-  "packages": [
-    "npm:pi-mcp-adapter",
-    "npm:pi-web-access"
   ]
 }

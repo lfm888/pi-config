@@ -33,11 +33,32 @@ BACKUP_DIR="$HOME_DIR/.pi-config-backup/$STAMP"
 PI_WEB_PORT="${PI_WEB_PORT:-8787}"
 PI_WEB_WORKSPACE="${PI_WEB_WORKSPACE:-$HOME_DIR}"
 
+# ─────────────────────────── 平台判定 ───────────────────────────
+# Windows（Git Bash/MSYS/Cygwin）没有 systemd，服务化改走 pi-web-ui 自带命令
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
+  *)                    IS_WINDOWS=0 ;;
+esac
+
+# Windows 下把 Git Bash 的 MSYS 路径（/c/x）转成 Windows 混合路径（C:/x）
+# —— pi-web-ui / pi 都是 Node 程序，不认 /c/... 这种写法
+win_path() {
+  if (( IS_WINDOWS )) && command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 # ─────────────────────────── 开关 ───────────────────────────
 DRY_RUN=0
 SKIP_PACKAGES=0
 SKIP_WEBUI=0
 KEEP_LEGACY_SKILLS=0
+# MCP 写入策略：merge（默认，模板为准 + 保留本机独有）| keep-local（只补缺失，不动已有）| reset（完全覆盖）
+MCP_MODE="merge"
+# Windows 上是否代为安装 pi-web-ui 自启服务（HKCU Run 键）：默认只提示，加 --windows-service 才执行
+WINDOWS_SERVICE=0
 
 # ─────────────────────────── 输出 ───────────────────────────
 if [[ -t 1 ]]; then
@@ -65,8 +86,13 @@ pi-config installer — 复刻 pi 的 MCP / skills / 包 / Web UI 配置
 选项:
   --dry-run              只打印将要执行的操作，不修改任何文件
   --skip-packages        跳过 pi 包安装
-  --skip-web-ui          跳过 pi-web-ui（npm 全局包 + systemd 服务）
+  --skip-web-ui          跳过 pi-web-ui（npm 全局包 + 服务化）
+  --windows-service      Windows：代为执行 pi-web-ui server install（HKCU Run 键开机自启）
   --keep-legacy-skills   保留 ~/.opencode/skills 等旧目录（默认从配置移除以免重复加载）
+  --mcp-mode <mode>      MCP 配置写入策略（默认 merge）：
+                           merge       模板里定义过的服务器以模板为准；本机额外添加的保留；差异全部打印
+                           keep-local  只补齐本机还没有的服务器；已存在的条目一律不动（保护本机热修）
+                           reset       完全以模板覆盖（旧行为）
   --port <n>             pi-web-ui 端口（默认 8787）
   --workspace <dir>      pi-web-ui 工作目录（默认 $HOME）
   -h, --help             显示本帮助
@@ -84,7 +110,9 @@ while (( $# > 0 )); do
     --dry-run)            DRY_RUN=1; shift ;;
     --skip-packages)      SKIP_PACKAGES=1; shift ;;
     --skip-web-ui)        SKIP_WEBUI=1; shift ;;
+    --windows-service)    WINDOWS_SERVICE=1; shift ;;
     --keep-legacy-skills) KEEP_LEGACY_SKILLS=1; shift ;;
+    --mcp-mode)           MCP_MODE="${2:?--mcp-mode 需要一个值}"; shift 2 ;;
     --port)               PI_WEB_PORT="${2:?--port 需要一个值}"; shift 2 ;;
     --workspace)          PI_WEB_WORKSPACE="${2:?--workspace 需要一个值}"; shift 2 ;;
     -h|--help)            usage; exit 0 ;;
@@ -149,32 +177,98 @@ backup_if_exists "$LEGACY_MCP_FILE"
 # 模板渲染：把 {{VAR}} 替换为同名环境变量的值
 # 注意：只处理双花括号，因此 ${GITHUB_PERSONAL_ACCESS_TOKEN} 这类
 #       「运行时插值」会被原样保留（由 pi-mcp-adapter 在启动服务器时展开）
+# 渲染后若仍残留 {{...}}（模板写法与渲染器不兼容）会直接报错退出，
+# 避免把「字面量占位符」当路径写进本机配置
+# 模板渲染：把 {{VAR}} 替换为同名环境变量的值（统一走 scripts/render-template.mjs，
+# 与 verify.sh 共用一份实现，避免两处漂移）
+#   $3=1 表示目标是 JSON：会对注入值做 JSON 转义，并把 MSYS 路径 /c/x 转成 C:/x
+# 渲染失败（如残留不受支持的 {{VAR||默认值}}）会直接报错退出，不写出坏配置
 render_template() {
-  local tpl="$1" out="$2"
-  if (( DRY_RUN )); then
-    skip "[dry-run] 渲染 $(basename "$tpl") → $(tilde "$out")"
-    return 0
+  local tpl="$1" out="$2" json="${3:-0}" mode=""
+  [[ "$json" == "1" ]] && mode="--json"
+  if ! node "$REPO_DIR/scripts/render-template.mjs" "$tpl" "$out" $mode; then
+    err "模板渲染失败：$(basename "$tpl")"
+    exit 1
   fi
-  mkdir -p "$(dirname "$out")"
-  TPL="$tpl" OUT="$out" node -e '
-    const fs = require("fs");
-    const src = fs.readFileSync(process.env.TPL, "utf8");
-    const rendered = src.replace(/\{\{([A-Z0-9_]+)\}\}/g, (m, key) =>
-      Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : m);
-    fs.writeFileSync(process.env.OUT, rendered);
-  '
 }
 
 # ══════════════════════════════════════════════════════════
 section "3/6  安装 MCP 配置"
 # ══════════════════════════════════════════════════════════
 
+# 渲染模板到临时文件（即使 --dry-run 也要渲染，才能算出「将要发生什么」）
+TMP_MCP="$(mktemp)"
+trap 'rm -f "$TMP_MCP"' EXIT
+render_template "$REPO_DIR/mcp/mcp.json.template" "$TMP_MCP" 1
+
 # 写入「对所有项目生效」的全局配置
 # （不要放在 ~/.mcp.json —— 那是项目级路径，只在 cwd=$HOME 时生效）
-render_template "$REPO_DIR/mcp/mcp.json.template" "$MCP_GLOBAL_FILE"
-if (( ! DRY_RUN )); then
-  ok "已写入全局 MCP 配置：$(tilde "$MCP_GLOBAL_FILE")"
-fi
+# 合并策略见 --mcp-mode：默认绝不静默丢弃本机配置
+TPL_RENDERED="$TMP_MCP" MCP_FILE="$MCP_GLOBAL_FILE" MCP_MODE="$MCP_MODE" MCP_DRYRUN="$DRY_RUN" \
+GREEN="$GREEN" YELLOW="$YELLOW" DIM="$DIM" RESET="$RESET" \
+node -e '
+  const fs = require("fs");
+  const path = require("path");
+  const G = process.env.GREEN, Y = process.env.YELLOW, D = process.env.DIM, R = process.env.RESET;
+  const tpl = JSON.parse(fs.readFileSync(process.env.TPL_RENDERED, "utf8"));
+  const target = process.env.MCP_FILE;
+  const mode = process.env.MCP_MODE || "merge";
+  const dry = process.env.MCP_DRYRUN === "1";
+
+  let cur = { mcpServers: {} };
+  if (fs.existsSync(target)) {
+    try {
+      cur = JSON.parse(fs.readFileSync(target, "utf8"));
+    } catch (e) {
+      console.error(`  ${Y}!${R} 现有 ${target} 不是合法 JSON：${e.message}`);
+      process.exit(1);
+    }
+  }
+  if (!cur.mcpServers || typeof cur.mcpServers !== "object") cur.mcpServers = {};
+
+  const tplServers = tpl.mcpServers || {};
+  const tplNames = new Set(Object.keys(tplServers));
+  const added = [], updated = [], same = [], keptLocal = [];
+  const localOnly = Object.keys(cur.mcpServers).filter((n) => !tplNames.has(n));
+
+  for (const [name, def] of Object.entries(tplServers)) {
+    if (!Object.prototype.hasOwnProperty.call(cur.mcpServers, name)) {
+      cur.mcpServers[name] = def;
+      added.push(name);
+      continue;
+    }
+    if (JSON.stringify(cur.mcpServers[name]) === JSON.stringify(def)) {
+      same.push(name);
+      continue;
+    }
+    if (mode === "keep-local") {
+      keptLocal.push(name);
+      continue;
+    }
+    cur.mcpServers[name] = def;
+    updated.push(name);
+  }
+  if (mode === "reset") for (const n of localOnly) delete cur.mcpServers[n];
+
+  const line = (label, arr) => { if (arr.length) console.log(`  ${G}✓${R} ${label}：${arr.join(", ")}`); };
+  line("新增服务器", added);
+  line("按模板更新", updated);
+  line("保留本机版本（模板已改）", keptLocal);
+  line("无变化", same);
+  if (mode === "reset") {
+    if (localOnly.length) console.log(`  ${Y}!${R} reset 模式：移除本机独有服务器 ${localOnly.join(", ")}`);
+  } else {
+    line("保留本机独有服务器", localOnly);
+  }
+
+  if (dry) {
+    console.log(`  ${D}• [dry-run] 不写入 ${target}（以上是即将发生的变化）${R}`);
+    process.exit(0);
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(cur, null, 2) + "\n");
+  console.log(`  ${G}✓${R} 已写入 ${target}（策略：${mode}）`);
+'
 
 # 移除会遮蔽全局配置的旧文件
 # 优先级（后者覆盖前者）：~/.config/mcp/mcp.json  <  <cwd>/.mcp.json
@@ -198,13 +292,14 @@ if (( DRY_RUN )); then
 else
   if [[ ! -f "$PI_SETTINGS" ]]; then
     export REPO_DIR
-    render_template "$REPO_DIR/pi/settings.json.template" "$PI_SETTINGS"
+    render_template "$REPO_DIR/pi/settings.json.template" "$PI_SETTINGS" 1
     ok "已创建 $(tilde "$PI_SETTINGS")（来自模板）"
   fi
 
   # 合并式更新：保留已有字段，只补充 skills 指向与 packages，避免覆盖你的其他设置
   GREEN="$GREEN" YELLOW="$YELLOW" DIM="$DIM" RESET="$RESET" \
   PI_SETTINGS="$PI_SETTINGS" REPO_DIR="$REPO_DIR" HOME_DIR="$HOME_DIR" \
+  PKGS_FILE="$REPO_DIR/pi/packages.txt" \
   KEEP_LEGACY="$KEEP_LEGACY_SKILLS" \
   node -e '
     const fs = require("fs");
@@ -241,7 +336,13 @@ else
     if (!skills.includes(skillsDir)) skills.push(skillsDir);
     cfg.skills = skills;
 
-    const WANT_PKGS = ["npm:pi-mcp-adapter", "npm:pi-web-access"];
+    // 包列表的唯一真源是 pi/packages.txt（避免两处维护漂移）
+    const WANT_PKGS = fs.existsSync(process.env.PKGS_FILE)
+      ? fs.readFileSync(process.env.PKGS_FILE, "utf8")
+          .split(/\r?\n/)   // 兼容 CRLF：否则行尾 \r 会让下面的 # 注释剥离失败
+          .map((l) => l.replace(/#.*$/, "").trim())
+          .filter(Boolean)
+      : [];
     const curPkgs = Array.isArray(cfg.packages) ? cfg.packages : [];
     cfg.packages = Array.from(new Set([...curPkgs, ...WANT_PKGS]));
 
@@ -301,8 +402,27 @@ else
     fi
   fi
 
-  # 6b. 用户级 systemd 服务（用户级无需 sudo）
-  if ! command -v systemctl >/dev/null 2>&1; then
+  # 6b. 服务化
+  #     Linux   → 用户级 systemd 单元（本仓库 pi-web-ui/pi-web-ui.service.template）
+  #     Windows → pi-web-ui 自带 server install（HKCU Run 键 + wscript 无黑窗启动）
+  if (( IS_WINDOWS )); then
+    WIN_WORKSPACE="$(win_path "$PI_WEB_WORKSPACE")"
+    if (( WINDOWS_SERVICE )); then
+      if (( DRY_RUN )); then
+        skip "[dry-run] pi-web-ui server install --port $PI_WEB_PORT --cwd $WIN_WORKSPACE"
+      elif run pi-web-ui server install --port "$PI_WEB_PORT" --cwd "$WIN_WORKSPACE" >/dev/null 2>&1; then
+        ok "Windows 自启服务已安装（HKCU Run 键）：http://127.0.0.1:$PI_WEB_PORT"
+      else
+        warn "server install 失败 —— 可手动执行：pi-web-ui server install --port $PI_WEB_PORT --cwd \"$WIN_WORKSPACE\""
+      fi
+    else
+      skip "Windows：跳过 systemd（仓库的 systemd 模板只用于 Linux）"
+      echo "       需要开机自启/桌面图标时执行："
+      echo "         pi-web-ui server install --port $PI_WEB_PORT --cwd \"$WIN_WORKSPACE\"   # HKCU Run 键，登录自启"
+      echo "         pi-web-ui server shortcut                                                 # 桌面一键启动图标"
+      echo "       或给本脚本加 --windows-service 让它代跑 server install"
+    fi
+  elif ! command -v systemctl >/dev/null 2>&1; then
     warn "未找到 systemctl —— 跳过服务安装，可前台启动：pi-web-ui"
   elif ! systemctl --user list-units >/dev/null 2>&1; then
     warn "用户级 systemd 不可用 —— 跳过服务安装，可前台启动：pi-web-ui"
@@ -312,8 +432,10 @@ else
     export LANG="${LANG:-C.UTF-8}"
 
     if [[ -f "$PI_WEB_ENTRY" ]]; then
-      render_template "$REPO_DIR/pi-web-ui/pi-web-ui.service.template" "$UNIT_FILE"
-      if (( ! DRY_RUN )); then
+      if (( DRY_RUN )); then
+        skip "[dry-run] 渲染 pi-web-ui.service → $(tilde "$UNIT_FILE")"
+      else
+        render_template "$REPO_DIR/pi-web-ui/pi-web-ui.service.template" "$UNIT_FILE"
         ok "已写入服务单元：$(tilde "$UNIT_FILE")"
       fi
       # 服务环境变量文件（systemd 服务不读 ~/.bashrc，github MCP 的 token 从这里取）
@@ -366,6 +488,9 @@ else
       printf '\n' >> "$SHELL_RC"
       cat "$REPO_DIR/shell/pi-open-web.sh" >> "$SHELL_RC"
       ok "已注册（$(tilde "$SHELL_RC")）：输入 pi 打开 Web UI；pi-tui 进终端界面"
+    fi
+    if (( IS_WINDOWS )); then
+      echo "       注意：该钩子只对 Git Bash 生效；PowerShell/CMD 可用桌面图标（pi-web-ui server shortcut）"
     fi
   fi
 fi

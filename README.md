@@ -13,9 +13,11 @@ pi-config/
 ├── add-mcp.sh                      # 添加新 MCP 服务器（可选探测验证）
 ├── add-skill.sh                    # 添加新 skill（本地目录或 GitHub）
 ├── scripts/
-│   └── mcp-probe.mjs               # JSON-RPC 探测脚本（共享）
+│   ├── mcp-probe.mjs               # JSON-RPC 探测脚本（共享）
+│   └── render-template.mjs         # 模板渲染器（install.sh / verify.sh 共用）
 ├── shell/
 │   └── pi-open-web.sh              # 「输入 pi 自动打开 Web UI」shell 钩子
+├── .gitattributes                  # 换行符统一（文本 LF、Windows 脚本 CRLF）
 ├── .gitignore                      # 密钥/缓存排除清单
 ├── mcp/
 │   └── mcp.json.template           # MCP 服务器配置模板（{{HOME}} 安装时替换）
@@ -59,27 +61,50 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 ./install.sh --dry-run              # 预览将执行的操作
 ./install.sh --skip-packages        # 跳过 pi 包安装
 ./install.sh --skip-web-ui          # 跳过 pi-web-ui
+./install.sh --windows-service      # Windows：代为安装 pi-web-ui 自启服务（HKCU Run 键）
 ./install.sh --keep-legacy-skills   # 保留 ~/.opencode/skills 等旧目录（默认移除防重复）
+./install.sh --mcp-mode merge       # MCP 写入策略：merge(默认)/keep-local/reset
 ./install.sh --port 9000            # pi-web-ui 端口
 ./install.sh --workspace ~/project  # pi-web-ui 工作目录
 ```
+
+`--mcp-mode` 决定 `~/.config/mcp/mcp.json` 的写入方式（**默认绝不静默丢弃本机配置**）：
+
+| 模式 | 行为 |
+|------|------|
+| `merge`（默认）| 模板里定义过的服务器以模板为准；本机额外添加的服务器保留；每处差异都会打印出来 |
+| `keep-local` | 只补齐本机还没有的服务器；已存在的条目一律不动（保护本机热修，比如版本钉定）|
+| `reset` | 完全以模板覆盖（旧行为，会移除本机独有服务器）|
 
 ## MCP 服务器
 
 | 服务器 | 包 | 已验证版本 | 工具数 | 说明 |
 |--------|-----|-----------|--------|------|
-| `filesystem` | `@modelcontextprotocol/server-filesystem` | 2026.8.31 | 14 | 文件读写（限定 `$HOME`）|
+| `filesystem` | `@modelcontextprotocol/server-filesystem@2025.7.1`（模板已钉版本）| 2025.7.1 | 14 | 文件读写（限定 `$HOME`）|
 | `github` | `@modelcontextprotocol/server-github` | 2025.4.8 | 26 | GitHub API（需要 `GITHUB_PERSONAL_ACCESS_TOKEN`）|
 | `git` | `@cyanheads/git-mcp-server` | 2.15.3 | 28 | 本地 git 操作（status/diff/commit/push…）|
-| `chrome-devtools` | `chrome-devtools-mcp` | 1.9.0 | 29 | 浏览器自动化/截图/网络/性能 |
+| `chrome-devtools` | `chrome-devtools-mcp` | 1.9.0 | 29 | 浏览器自动化/截图/网络/性能（`lazy` 启动）|
 
 > ⚠️ 历史版本演进（重要！）：
 > - ~~`@modelcontextprotocol/server-git`~~ **在 npm 上不存在（404）**，改用 `@cyanheads/git-mcp-server`
 > - ~~`@modelcontextprotocol/server-puppeteer`~~ 已**被官方弃用**（no longer supported），改用 `chrome-devtools-mcp`
+> - ⚠️ `@modelcontextprotocol/server-filesystem` **2026.x 的 npm 包漏声明 `zod` 依赖**（zod 只被嵌套装在 sdk 的 `node_modules`，顶层没有），启动即 `ERR_MODULE_NOT_FOUND` → 模板已钉 `@2025.7.1`。**MCP 条目一律钉版本，别用 latest。**
 > - `~/.mcp.json` 是**项目级**路径（只在 cwd 匹配时生效），因此统一迁到全局 `~/.config/mcp/mcp.json`
 
-服务器采用 **eager 启动**：每次会话启动即连接全部 4 个服务器（`/mcp` 立即可见连接状态）。
-想省资源时，把任意服务器的 `"lifecycle": "eager"` 改成 `"lazy"` 即可（默认懒启动）。
+服务器启动策略（`lifecycle`）：`filesystem` / `github` / `git` 用 **eager**（会话启动即连，`/mcp` 立即可见状态）；
+`chrome-devtools` 用 **lazy** —— 它会拉起 Chrome，没必要每次开会话都启动，首次调用其工具时才连接。
+可选值：`eager` / `lazy` / `keep-alive` / `lazy-keep-alive`。
+
+### 可选：GitHub 换官方远程 MCP（OAuth，免 PAT）
+
+`github` 目前用 npm 上已归档的 `@modelcontextprotocol/server-github` + `GITHUB_PERSONAL_ACCESS_TOKEN`。
+想免掉 token 管理，可换成 GitHub 官方远程服务器（pi-mcp-adapter 内置预设，走 OAuth）：
+
+```json
+"github": { "url": "https://api.githubcopilot.com/mcp", "auth": "oauth", "protocolVersion": "auto" }
+```
+
+改完在 pi 里执行 `/mcp` 按提示完成一次浏览器授权。注意：首次需要交互、依赖 GitHub Copilot 账号权限、离线不可用 —— 所以默认仍保留 PAT 方案。
 
 ## skills
 
@@ -94,7 +119,7 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
 
 ## pi 包
 
-见 `pi/packages.txt` —— 当前两个：
+见 `pi/packages.txt` —— **这是包列表的唯一真源**（`install.sh` 读它来 `pi install`，并同步写进 `~/.pi/agent/settings.json`），当前两个：
 
 - `pi-mcp-adapter` — MCP 适配器（代理工具，防止上下文爆炸）
 - `pi-web-access` — 网页搜索/URL 抓取/PDF/视频解析工具
@@ -192,12 +217,34 @@ git status   # 确认没有意外文件
 - 添加即生效 —— pi 的 settings.json 已指向 `skills/` 目录，无需任何额外注册
 - 克隆走 git(HTTP/1.1) + codeload tarball 双重兜底，GitHub 网络不稳也能用
 
+### 模板渲染规则（`{{VAR}}`）
+
+模板（如 `mcp/mcp.json.template`）由 `scripts/render-template.mjs` 渲染，install.sh 与 verify.sh 共用同一实现：
+
+| 规则 | 说明 |
+|------|------|
+| `{{VAR}}` | 替换为同名环境变量；**变量名只能是 `[A-Z0-9_]`** |
+| `{{VAR\|\|默认值}}` | ❌ **不支持**，渲染会直接失败退出（曾有人为了绕开 Windows 反斜杠问题改成这种写法，正确解法见下一条）|
+| `${VAR}` | 原样保留，由 pi-mcp-adapter 在启动服务器时展开（如 GitHub token）|
+| JSON 模板（`--json`）| 注入值做 **JSON 转义**（Windows 的 `C:\...` 反斜杠会被正确转义），并把 Git Bash 的 MSYS 路径 `/c/x` 转成 `C:/x`（Node/pi 不认 `/c/...`）|
+
+> 不转义会写出非法 JSON，不转换会写出 Node 找不到的路径 —— 两者都真实发生过，现在由 `verify.sh` 的“模板渲染校验”拦下。
+
 ### push 前自检
 
 ```bash
-./verify.sh              # 完整：探测全部 MCP 服务器 + 校验 skills + 扫密钥
+./verify.sh              # 完整：渲染校验 + 探测全部 MCP 服务器 + 校验 skills + 扫密钥
 ./verify.sh --no-probe   # 只做静态检查（离线可用，快）
+./verify.sh --only filesystem   # 只探测指定服务器（4 个全探较慢，改一个条目时用）
 ```
+
+`--no-probe` 的静态检查覆盖：
+
+1. **模板渲染**：用 `scripts/render-template.mjs` 渲染 `mcp/mcp.json.template`（与 install.sh 同一实现）
+2. **残留占位符**：渲染后仍有 `{{...}}` → 直接失败（写法不受支持）
+3. **JSON 合法性**：渲染结果必须能被 `JSON.parse`（Windows 路径反斜杠不转义就会在这里被抓住）
+4. **本机 skills 路径**：`~/.pi/agent/settings.json` 里的 skills 路径必须真实存在 —— 仓库被移动/删除时 pi 是**静默失效**的（不报错，只是少加载 skills）
+5. skills frontmatter 校验 + 密钥扫描
 
 ### 任何机器一键同步
 
@@ -229,10 +276,13 @@ pi 里执行 /reload                                # 让 MCP 生效
 | `/mcp` 里全部 offline | 服务器是懒启动，调用工具时才连接；先 `mcp({ search: ... })` 触达 |
 | 终端空白（pi-web-ui）| node-pty 未编译成功，重装：`npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui` |
 | MCP 配置不生效 | 执行 `/reload`；确认没有 `~/.mcp.json` 残留遮蔽全局配置 |
+| `filesystem` 报 `ERR_MODULE_NOT_FOUND` | 拉到了有缺陷的 2026.x 版本；确认 `~/.config/mcp/mcp.json` 里是 `@modelcontextprotocol/server-filesystem@2025.7.1`，改完 `/reload` |
+| skills 不生效（无任何报错）| `~/.pi/agent/settings.json` 的 skills 路径悬空（仓库被移动/删除）→ 重跑 `./install.sh`；`./verify.sh --no-probe` 会提前报出来 |
+| Windows 上 packages 变成注释文字 | 老版 install.sh 的 CRLF 解析 bug（已修）→ `git pull` 后重跑 `./install.sh` |
 
 ## 已验证环境
 
-- **系统**：Linux (systemd)，用户级服务
+- **系统**：Linux (systemd) 用户级服务；Windows 11 + Git Bash（`C:\Program Files\Git`）
 - **Node**：v24.18.0（要求 ≥ 22.19）
 - **pi**：0.85.1
 - **pi-web-ui**：0.76.0
@@ -253,7 +303,7 @@ pi 里执行 /reload                                # 让 MCP 生效
 
 ### 一键安装 (推荐)
 
-打开 **Git Bash** (D:\lfm\Git\bin\bash.exe) 并执行：
+打开 **Git Bash**（默认 `C:\Program Files\Git\bin\bash.exe`）并执行：
 
 ```bash
 # 1. 克隆仓库到主目录
@@ -261,16 +311,20 @@ git clone <仓库地址> ~/pi-config
 cd ~/pi-config
 
 # 2. 配置 GitHub Token (仅需一次，写入 ~/.bashrc)
-export GITHUB_PERSONAL_ACCESS_TOKEN=""
-echo 'export GITHUB_PERSONAL_ACCESS_TOKEN=""' >> ~/.bashrc
+export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_你的token"
+echo 'export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_你的token"' >> ~/.bashrc
 
 # 3. 运行安装脚本 (幂等，可重复执行)
 ./install.sh
 
-# 4. 启动 pi-web-ui (Windows 无 systemd，需手动启动)
-pi-web-ui
-# 浏览器自动打开: http://127.0.0.1:8787
-# 如不自动打开，手动访问 http://localhost:8787
+# 4. 启动 pi-web-ui（Windows 无 systemd）
+pi-web-ui                       # 前台运行（Ctrl+C 停止）
+
+# 开机自启 + 隐形启动（推荐）：
+pi-web-ui server install --port 8787 --cwd "$USERPROFILE"   # 写 HKCU Run 键，登录自启
+pi-web-ui server shortcut                                   # 桌面一键启动图标
+# 或直接让 install.sh 代跑：./install.sh --windows-service
+# 浏览器没自动打开时，手动访问 http://localhost:8787
 ```
 
 ### 常用命令备忘
@@ -287,8 +341,12 @@ pi-web-ui
 ### 已知限制
 
 - **node-pty 编译**：Windows 上需 Visual Studio Build Tools，若编译失败，pi-web-ui 的内置终端可能不可用（核心聊天功能正常）
-- **systemd 服务**：Windows 无法使用 `systemctl --user` (除非 WSL2 + systemd)，所有服务需手动启动
-- **GitHub token**：写入 `~/.bashrc` 后每个新终端自动生效；pi-web-ui 服务单独读取 `~/.config/pi-web.env`
+- **systemd 服务**：Windows 无法使用 `systemctl --user`（除非 WSL2 + systemd）。Windows 请改用 pi-web-ui 自带的服务化命令（等价于本仓库的 systemd 模板）：
+  - `pi-web-ui server install --port 8787 --cwd "$USERPROFILE"` —— 写 HKCU Run 键，登录自启
+  - `pi-web-ui server shortcut` —— 桌面一键启动图标
+  - 管理：`pi-web-ui server status | restart | stop | uninstall`
+  - 或 `./install.sh --windows-service` —— 让 install.sh 自动识别 Windows 并代跑 `server install`
+- **GitHub token**：写入 `~/.bashrc` 后每个新终端生效。**Linux** 上 pi-web-ui 服务从 `~/.config/pi-web.env` 读取（systemd `EnvironmentFile`）；**Windows 没有这个机制** —— 服务化启动时进程环境不含 `~/.bashrc` 的 export，要么用 Git Bash 前台跑 `pi-web-ui`，要么把 `$env:GITHUB_PERSONAL_ACCESS_TOKEN="ghp_..."` 加进 `%APPDATA%\pi-web-ui\pi-web-ui.ps1` 再重启服务
 
 ### 后续同步
 

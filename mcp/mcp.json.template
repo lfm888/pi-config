@@ -2,7 +2,7 @@
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "{{HOME||C:/Users/万灵-干眼1}}"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2025.7.1", "{{HOME}}"],
       "lifecycle": "eager"
     },
     "github": {
@@ -21,7 +21,7 @@
     "chrome-devtools": {
       "command": "npx",
       "args": ["-y", "chrome-devtools-mcp@1"],
-      "lifecycle": "eager"
+      "lifecycle": "lazy"
     }
   }
 }

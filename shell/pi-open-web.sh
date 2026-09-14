@@ -2,13 +2,28 @@
 # 输入 pi（不带参数）→ 打开 pi-web-ui 浏览器界面
 # 输入 pi "提问" / pi --print ... → 仍走终端 TUI（保留原功能）
 # 输入 pi-tui / \pi → 强制终端 TUI
+#
+# 平台分支：
+#   · Windows (Git Bash/MSYS)：用 cmd start 打开默认浏览器；服务化走 pi-web-ui 自带命令
+#   · Linux/macOS：优先 systemd 用户服务；有图形环境才弹浏览器（SSH 下只打印地址）
 _pi_open_web() {
   local url="${PI_WEB_URL:-http://127.0.0.1:8787}"
+  local uname_s
+  uname_s="$(uname -s 2>/dev/null || echo unknown)"
 
-  # 1) 确保 pi-web-ui 服务在运行（优先 systemd，失败则临时拉起）
+  # 1) 确保 pi-web-ui 服务在运行
   if ! curl -sf "$url/api/health" >/dev/null 2>&1; then
-    systemctl --user start pi-web-ui >/dev/null 2>&1 \
-      || { nohup pi-web-ui --no-browser >/dev/null 2>&1 & }
+    case "$uname_s" in
+      MINGW*|MSYS*|CYGWIN*)
+        # Windows：若已用 pi-web-ui server install 装过自启服务，用 server start 拉起
+        pi-web-ui server start >/dev/null 2>&1 \
+          || { nohup pi-web-ui --no-browser >/dev/null 2>&1 & }
+        ;;
+      *)
+        systemctl --user start pi-web-ui >/dev/null 2>&1 \
+          || { nohup pi-web-ui --no-browser >/dev/null 2>&1 & }
+        ;;
+    esac
     local i
     for i in $(seq 1 15); do
       curl -sf "$url/api/health" >/dev/null 2>&1 && break
@@ -16,14 +31,22 @@ _pi_open_web() {
     done
   fi
 
-  # 2) 有图形环境 → 打开浏览器；无图形（SSH 等）→ 打印地址
-  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-    command xdg-open "$url" >/dev/null 2>&1 \
-      || command sensible-browser "$url" >/dev/null 2>&1 \
-      || echo "pi-web-ui 已运行，请手动打开: $url"
-  else
-    echo "pi-web-ui 已运行: $url"
-  fi
+  # 2) 打开浏览器（无图形环境则只打印地址）
+  case "$uname_s" in
+    MINGW*|MSYS*|CYGWIN*)
+      cmd //c start "" "$url" >/dev/null 2>&1 \
+        || echo "pi-web-ui 已运行，请手动打开: $url"
+      ;;
+    *)
+      if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+        command xdg-open "$url" >/dev/null 2>&1 \
+          || command sensible-browser "$url" >/dev/null 2>&1 \
+          || echo "pi-web-ui 已运行，请手动打开: $url"
+      else
+        echo "pi-web-ui 已运行: $url"
+      fi
+      ;;
+  esac
 }
 
 pi() {
